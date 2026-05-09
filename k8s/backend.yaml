@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: cms
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+        - name: backend
+          image: cms-backend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5000
+          envFrom:
+            - secretRef:
+                name: cms-secret
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: PORT
+              value: "5000"
+          command: ["sh", "-c", "npx prisma migrate deploy && node dist/index.js"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: cms
+spec:
+  selector:
+    app: backend
+  ports:
+    - port: 5000
+      targetPort: 5000
