@@ -1,0 +1,77 @@
+name: Build & Deploy to k3s
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    timeout-minutes: 15
+
+    steps:
+      # ── Checkout ──────────────────────────────────────────────
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── Build Docker Images ──────────────────────────────────
+      - name: Build Backend image
+        run: |
+          docker build --network host --no-cache \
+            -t cms-backend:latest \
+            -f backend/Dockerfile backend/
+
+      - name: Tag Worker image (same codebase as backend)
+        run: docker tag cms-backend:latest cms-worker:latest
+
+      - name: Build Frontend image
+        run: |
+          docker build --network host --no-cache \
+            --build-arg VITE_API_URL=/api \
+            -t cms-frontend:latest \
+            -f frontend/Dockerfile frontend/
+
+      # ── Import images vào k3s (containerd) ───────────────────
+      - name: Import images to k3s
+        run: |
+          docker save cms-backend:latest  | sudo k3s ctr images import -
+          docker save cms-worker:latest   | sudo k3s ctr images import -
+          docker save cms-frontend:latest | sudo k3s ctr images import -
+
+      # ── Apply K8s manifests (nếu có thay đổi) ───────────────
+      - name: Apply Kubernetes manifests
+        run: |
+          kubectl apply -f k8s/ -n cms
+
+      # ── DB Migration ─────────────────────────────────────────
+      - name: Run Prisma DB push
+        run: |
+          kubectl rollout restart deployment backend -n cms
+          kubectl rollout status deployment/backend -n cms --timeout=120s
+          kubectl exec deployment/backend -n cms -- npx prisma db push --accept-data-loss
+
+      # ── Rollout Restart tất cả ───────────────────────────────
+      - name: Restart all deployments
+        run: |
+          kubectl rollout restart deployment worker frontend -n cms
+
+      # ── Chờ pods Ready ───────────────────────────────────────
+      - name: Wait for rollout completion
+        run: |
+          kubectl rollout status deployment/backend  -n cms --timeout=120s
+          kubectl rollout status deployment/worker   -n cms --timeout=120s
+          kubectl rollout status deployment/frontend -n cms --timeout=120s
+
+      # ── Health Check ─────────────────────────────────────────
+      - name: Verify deployment
+        run: |
+          sleep 10
+          curl -sf http://localhost/api/health || (echo "❌ Health check failed!" && exit 1)
+          echo "✅ Deployment successful!"
+
+      # ── Cleanup Docker images cũ ─────────────────────────────
+      - name: Cleanup old Docker images
+        run: |
+          docker image prune -f
+        if: always()
+
