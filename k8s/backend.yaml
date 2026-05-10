@@ -27,6 +27,10 @@ spec:
               value: "production"
             - name: PORT
               value: "5000"
+            - name: REDIS_HOST
+              value: "redis"
+            - name: REDIS_PORT
+              value: "6379"
           command: ["sh", "-c", "npx prisma migrate deploy && node dist/index.js"]
 ---
 apiVersion: v1
