@@ -1,79 +1,100 @@
-# CMS Blog (Production-Grade MVP)
+# CMS Blog (Production-Grade 3-Tier Architecture)
 
-A 3-tier CMS blog with React + TypeScript frontend, Node/Express + Prisma backend,
-PostgreSQL, Redis caching, and a BullMQ worker for async jobs.
+A robust 3-tier CMS blog featuring a React frontend, Node.js backend, and a complete **DevOps pipeline**. The system is containerized, orchestrated via Kubernetes (k3s), and secured with Cloudflare Tunnel & WAF.
 
-## Stack
+## 🚀 Tech Stack
+
+### Application Layer
 - **Frontend**: React 18 + TypeScript + Vite + TailwindCSS + Axios
-- **Backend**: Node.js + Express + TypeScript + Prisma + JWT + bcrypt
-- **DB**: PostgreSQL
-- **Cache / Queue**: Redis + ioredis + BullMQ
-- **DevOps**: Docker, multi-stage Dockerfiles, docker-compose
+- **Backend**: Node.js + Express + TypeScript + Prisma + JWT + bcryptjs
+- **Database**: PostgreSQL 16
+- **Cache & Queue**: Redis 7 + ioredis + BullMQ (Background Workers)
 
-## Project Layout
-```
+### DevOps & Infrastructure
+- **Containerization**: Docker (Multi-stage builds)
+- **Orchestration**: Kubernetes (k3s) + Traefik Ingress
+- **CI/CD**: GitHub Actions + Self-hosted Runner
+- **Networking**: Cloudflare Tunnel (Inbound routing without Port Forwarding)
+- **Security**: Cloudflare WAF (Rate Limiting, OWASP Core Ruleset, Bot Fight Mode)
+
+---
+
+## 📂 Project Layout
+```text
 cms-blog/
-├── frontend/
-├── backend/
-├── docker-compose.yml
-├── .env.example
+├── .github/workflows/   # CI/CD Pipeline (deploy.yml)
+├── backend/             # Node.js API & Prisma schema
+├── frontend/            # React App & Vite config
+├── k8s/                 # Kubernetes Manifests (Deployments, Services, Ingress)
+├── docker-compose.yml   # Local testing environment
 └── README.md
 ```
 
-## Quick Start (Docker)
+---
 
-1. Copy env file:
-   ```bash
-   cp .env.example .env
-   ```
-2. Start the stack:
-   ```bash
-   docker compose up --build
-   ```
-3. Run DB migrations + seed (in a new terminal):
-   ```bash
-   docker compose exec backend npx prisma migrate deploy
-   docker compose exec backend npm run seed
-   ```
-4. Open:
-   - Frontend: http://localhost:3000
-   - Backend:  http://localhost:5000/api/health
-   - Postgres: localhost:5432
-   - Redis:    localhost:6379
+## 🛠️ Deployment Instructions
 
-### Default Admin (after seeding)
-- Email: `admin@example.com`
-- Password: `admin123`
-
-## Local Dev (without Docker)
+### 1. Local Development (Docker Compose)
+The easiest way to run the stack locally for development:
 ```bash
-# Backend
-cd backend
-npm install
-npx prisma migrate dev
-npm run seed
-npm run dev
+cp .env.example .env
+docker compose up --build -d
 
-# Frontend (new terminal)
-cd frontend
-npm install
-npm run dev
+# Run migrations and seed
+docker compose exec backend npx prisma migrate deploy
+docker compose exec backend npm run seed
 ```
+- Frontend: `http://localhost:3000`
+- Backend API: `http://localhost:5000/api/health`
 
-## Key Endpoints
-- `POST /api/auth/register` `{ email, password, name }`
-- `POST /api/auth/login` `{ email, password }` -> `{ token }`
-- `GET  /api/posts?page=1&q=search` (Redis cached, 60s)
-- `GET  /api/posts/:slug` (Redis cached, 60s)
-- `POST /api/posts` (Author/Admin)
-- `PUT/DELETE /api/posts/:id` (Owner/Admin)
-- `POST /api/comments` `{ postId, content }` (enqueues BullMQ job)
-- `GET  /api/comments/post/:postId`
-- `PATCH /api/comments/:id/approve` (Admin)
-- `DELETE /api/comments/:id` (Admin)
-- `GET  /api/admin/users` (Admin)
+### 2. Production Deployment (Kubernetes - k3s)
+This project includes manifests for deploying to a k3s cluster.
 
-## Architecture Notes
-- The **worker** service runs the same image as the backend, but with command
-  `node dist/workers/index.js` to consume the BullMQ `comment-notifications` queue.
-- Cache invalidation: post create/update/delete clears `posts:list:*` and `post:slug:*` keys.
+1. Configure your secrets in `k8s/secret.yaml`.
+2. Build and import images to k3s:
+   ```bash
+   docker build -t cms-backend:latest ./backend
+   docker build -t cms-worker:latest ./backend
+   docker build --build-arg VITE_API_URL=/api -t cms-frontend:latest ./frontend
+   
+   docker save cms-backend:latest | sudo k3s ctr images import -
+   docker save cms-worker:latest | sudo k3s ctr images import -
+   docker save cms-frontend:latest | sudo k3s ctr images import -
+   ```
+3. Apply manifests:
+   ```bash
+   kubectl apply -f k8s/
+   ```
+
+### 3. CI/CD Automation
+The repository uses GitHub Actions for CI/CD. When code is pushed to the `main` branch, the workflow will automatically:
+1. Build new Docker images.
+2. Import images into the k3s cluster.
+3. Push database schema changes (`npx prisma db push`).
+4. Perform a zero-downtime rolling restart (`kubectl rollout restart`).
+
+*(Requires a self-hosted runner configured on your deployment server).*
+
+---
+
+## 🛡️ Security Features
+- **Cloudflare Tunnel**: Exposes the Traefik Ingress safely without opening incoming ports on the server firewall.
+- **Rate Limiting**: Protects `/api/auth/login` and `/register` endpoints from brute-force attacks.
+- **OWASP Managed Ruleset**: Cloudflare WAF automatically filters out malicious payloads (XSS, SQLi).
+- **Environment Variable Protection**: WAF rules block any unauthorized requests to `.env`, `.git`, or internal paths.
+
+---
+
+## 🔑 Default Admin Account (After Seeding)
+- **Email**: `admin@example.com`
+- **Password**: `admin123`
+
+---
+
+## 📡 Key Endpoints
+- `POST /api/auth/register` - Create new user account
+- `POST /api/auth/login` - Authenticate and get JWT token
+- `GET  /api/posts` - Fetch posts (Redis cached)
+- `POST /api/posts` - Create post (Admin/Author only)
+- `POST /api/comments` - Add comment (enqueues BullMQ background job)
+- `GET  /api/admin/users` - Admin user management
